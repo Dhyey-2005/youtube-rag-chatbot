@@ -1,0 +1,22 @@
+# FastAPI Backend Server
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+
+# Environment Variable Management
+python-dotenv>=1.0.0
+
+# LangChain Ecosystem
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-google-genai>=2.0.0
+google-generativeai>=0.8.0
+
+# Vector Database & Math
+faiss-cpu>=1.8.0
+numpy>=1.26.0
+
+# YouTube Audio/Transcript Extraction & Free Translation
+yt-dlp>=2024.0.0
+deep-translator>=1.11.0

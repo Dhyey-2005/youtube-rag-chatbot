@@ -1,0 +1,53 @@
+# Environment variables & secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Temporary files & caches
+.tmp/
+.pip-cache/
+.npm-cache/
+
+# Node & Frontend
+frontend/node_modules/
+frontend/.npm-cache/
+frontend/dist/
+.DS_Store
+Thumbs.db
+
+# Local CLI tools
+bin/
+*.exe
+
+# Vector DB local store
+backend/vector_db/
+
+
