@@ -27,9 +27,9 @@ export default function ChatWindow({
   };
 
   const starterQuestions = [
-    "How many neurons are in the input layer for the 28 by 28 pixel image?",
-    "Explain the overall layered architecture of the network.",
-    "What do the numbers inside the neurons represent?",
+    "What is the main topic of this video?",
+    "Summarize the key takeaways and important concepts.",
+    "What are the most important conclusions discussed?",
   ];
 
   return (

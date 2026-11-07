@@ -167,7 +167,7 @@ def process_video(request: VideoProcessRequest):
     Ingests, chunks, embeds, and stores a YouTube video transcript.
     Skips reprocessing if the video has already been indexed.
     """
-    global _vectorstore
+    global _vectorstore, _sessions
 
     clean_url = request.url.strip()
     if not clean_url:
@@ -184,13 +184,14 @@ def process_video(request: VideoProcessRequest):
             detail=f"Invalid YouTube URL or ID '{clean_url}'. Could not extract an 11-character video ID.",
         )
 
-    # 2. Check if video is already indexed
+    # 2. Check if this exact video is already the ONLY active indexed video
     vs = get_or_load_vectorstore()
     if vs is not None:
         stats = get_vectorstore_stats(vs)
-        if video_id in stats.get("indexed_video_ids", []):
-            logger.info(f"Video '{video_id}' is already indexed in FAISS.")
-            # Find the title and language from existing docstore if possible
+        indexed_ids = stats.get("indexed_video_ids", [])
+        if indexed_ids == [video_id]:
+            logger.info(f"Video '{video_id}' is already the currently active indexed video. Resetting chat history.")
+            _sessions.clear()
             doc_sample = next(
                 (d for d in vs.docstore._dict.values() if d.metadata.get("video_id") == video_id),
                 None,
@@ -207,10 +208,14 @@ def process_video(request: VideoProcessRequest):
                 language=language,
                 chunk_count=video_chunk_count,
                 status="already_indexed",
-                message=f"Video '{title}' is already indexed and ready for questions.",
+                message=f"Video '{title}' is already indexed and active. Chat history has been cleared.",
             )
 
-    # 3. Phase 1: Ingestion
+    # 3. New video link detected: Clear all existing chat history and prior video indices
+    logger.info(f"New video link detected ('{video_id}'). Clearing older video indices and chat history...")
+    _sessions.clear()
+
+    # 4. Phase 1: Ingestion
     logger.info(f"Ingesting transcript for video '{video_id}'...")
     try:
         raw_documents = load_youtube_transcript(video_id)
@@ -224,7 +229,7 @@ def process_video(request: VideoProcessRequest):
     video_title = raw_documents[0].metadata.get("video_title", video_id)
     language = raw_documents[0].metadata.get("language", "unknown")
 
-    # 4. Phase 2: Text Splitting
+    # 5. Phase 2: Text Splitting
     logger.info(f"Splitting transcript into chunks for '{video_id}'...")
     try:
         chunks = split_transcript_documents(raw_documents, chunk_size=1000, chunk_overlap=200)
@@ -235,14 +240,11 @@ def process_video(request: VideoProcessRequest):
             detail=f"Text splitting failed: {exc}",
         )
 
-    # 5. Phase 3 & 4: Embeddings & FAISS Storage
-    logger.info(f"Generating embeddings and adding to FAISS for '{video_id}'...")
+    # 6. Phase 3 & 4: Embeddings & Fresh FAISS Storage (Replacing older video data)
+    logger.info(f"Generating embeddings and creating fresh isolated FAISS store for '{video_id}'...")
     try:
-        if vs is None:
-            _vectorstore = create_vectorstore(chunks, save=True, folder_path=DEFAULT_VECTOR_DB_DIR)
-        else:
-            add_documents_to_vectorstore(vs, chunks, save_after=True, folder_path=DEFAULT_VECTOR_DB_DIR)
-            _vectorstore = vs
+        # Always create a brand-new vector store containing exclusively this video's chunks
+        _vectorstore = create_vectorstore(chunks, save=True, folder_path=DEFAULT_VECTOR_DB_DIR)
     except Exception as exc:
         logger.error(f"Vector store indexing failed for '{video_id}': {exc}")
         raise HTTPException(
@@ -256,7 +258,7 @@ def process_video(request: VideoProcessRequest):
         language=language,
         chunk_count=len(chunks),
         status="processed",
-        message=f"Video '{video_title}' successfully processed into {len(chunks)} chunks and indexed.",
+        message=f"Video '{video_title}' successfully processed into {len(chunks)} chunks. All older videos and chat history cleared.",
     )
 
 

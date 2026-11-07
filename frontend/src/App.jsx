@@ -17,7 +17,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+  const [sessionId, setSessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
 
   // Initial health check on mount
   useEffect(() => {
@@ -45,6 +45,10 @@ export default function App() {
     setProcessing(true);
     setError(null);
     setSuccessMsg(null);
+    // Clear chat messages and generate fresh session whenever a new video is uploaded
+    setMessages([]);
+    const freshSession = `session_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setSessionId(freshSession);
 
     try {
       const result = await processYouTubeVideo(url);
@@ -57,8 +61,8 @@ export default function App() {
 
       setSuccessMsg(
         result.status === 'already_indexed'
-          ? `"${result.title}" is already indexed and ready for questions!`
-          : `Successfully processed "${result.title}" into ${result.chunk_count} chunks!`
+          ? `"${result.title}" is ready. Chat history cleared.`
+          : `Processed "${result.title}" into ${result.chunk_count} chunks. All previous history cleared!`
       );
 
       // Refresh health diagnostics
