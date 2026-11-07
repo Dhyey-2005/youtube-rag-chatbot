@@ -2,14 +2,18 @@
 backend/ingestion.py
 Phase 1: YouTube Transcript Ingestion Module
 Converts YouTube video transcripts into LangChain Document objects preserving snippet-level metadata.
+Includes reliable fallback to youtube_transcript_api for cloud environments where yt-dlp encounters bot challenges.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 import sys
+import urllib.request
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
 
@@ -19,6 +23,88 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from get_youtube_transcript import extract_video_id, get_youtube_transcript
+
+logger = logging.getLogger("ingestion")
+
+
+def _fetch_via_youtube_transcript_api(
+    video_id: str,
+    preferred_languages: Optional[List[str]] = None,
+    translate_to_english: bool = False,
+) -> Dict[str, Any]:
+    """
+    Fallback transcript fetcher using youtube_transcript_api.
+    Bypasses yt-dlp web player bot checks on cloud datacenter IPs (Render, AWS, GCP).
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
+
+    selected_transcript = None
+    selected_lang = "en"
+    is_translated = False
+
+    # 1. Check preferred languages if specified
+    if preferred_languages:
+        try:
+            selected_transcript = transcript_list.find_transcript(preferred_languages)
+            selected_lang = selected_transcript.language_code
+        except Exception:
+            pass
+
+    # 2. Check English if requested
+    if selected_transcript is None and translate_to_english:
+        try:
+            selected_transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+            selected_lang = selected_transcript.language_code
+        except Exception:
+            # Try auto-translating the first available track
+            try:
+                first_t = next(iter(transcript_list))
+                if first_t.is_translatable:
+                    selected_transcript = first_t.translate("en")
+                    selected_lang = "en"
+                    is_translated = True
+            except Exception:
+                pass
+
+    # 3. Fall back to any available transcript
+    if selected_transcript is None:
+        selected_transcript = next(iter(transcript_list))
+        selected_lang = selected_transcript.language_code
+
+    fetched_raw = selected_transcript.fetch()
+    snippets: List[Dict[str, Any]] = []
+    for item in fetched_raw:
+        text = (item.text if hasattr(item, "text") else item.get("text", "")).strip()
+        if not text:
+            continue
+        start = float(item.start if hasattr(item, "start") else item.get("start", 0.0))
+        duration = float(item.duration if hasattr(item, "duration") else item.get("duration", 0.0))
+        snippets.append({"text": text, "start": start, "duration": duration})
+
+    # Fetch title via official public oEmbed API
+    title = video_id
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        req = urllib.request.Request(
+            oembed_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            oembed_data = json.loads(resp.read().decode("utf-8"))
+            title = oembed_data.get("title", video_id)
+    except Exception:
+        title = video_id
+
+    return {
+        "video_id": video_id,
+        "title": title,
+        "language": selected_lang,
+        "snippets": snippets,
+        "is_translated": is_translated,
+    }
 
 
 def load_youtube_transcript(
@@ -40,7 +126,7 @@ def load_youtube_transcript(
 
     Raises:
         ValueError: If video_url is empty, invalid type, or contains an invalid YouTube video ID.
-        RuntimeError: If transcript extraction fails (no captions, network error, etc.).
+        RuntimeError: If transcript extraction fails across all methods.
     """
     # 1. Input validation
     if not video_url or not isinstance(video_url, str) or not video_url.strip():
@@ -56,7 +142,7 @@ def load_youtube_transcript(
             "Could not extract a valid 11-character YouTube video ID."
         )
 
-    # 2. Extract transcript using existing get_youtube_transcript module
+    # 2. Extract transcript using primary extractor with fallback
     try:
         transcript_data = get_youtube_transcript(
             video_url_or_id=video_id,
@@ -64,9 +150,22 @@ def load_youtube_transcript(
             translate_to_english=translate_to_english,
         )
     except Exception as exc:
-        raise RuntimeError(
-            f"Failed to extract transcript for video '{video_id}': {exc}"
-        ) from exc
+        logger.warning(
+            f"Primary yt-dlp extractor failed for '{video_id}' ({exc}). Attempting fallback via youtube_transcript_api..."
+        )
+        try:
+            transcript_data = _fetch_via_youtube_transcript_api(
+                video_id=video_id,
+                preferred_languages=preferred_languages,
+                translate_to_english=translate_to_english,
+            )
+            logger.info(
+                f"Fallback youtube_transcript_api succeeded for '{video_id}' with {len(transcript_data.get('snippets', []))} snippets."
+            )
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"Failed to extract transcript for video '{video_id}' via primary extractor ({exc}) and fallback ({fallback_exc})"
+            ) from fallback_exc
 
     snippets = transcript_data.get("snippets", [])
     if not snippets:
@@ -107,4 +206,3 @@ def load_youtube_transcript(
 
 # Alias for load_youtube_transcript
 ingest_youtube_transcript = load_youtube_transcript
-

@@ -20,3 +20,5 @@ numpy>=1.26.0
 # YouTube Audio/Transcript Extraction & Free Translation
 yt-dlp>=2024.0.0
 deep-translator>=1.11.0
+youtube-transcript-api>=1.0.0
+defusedxml>=0.7.0
