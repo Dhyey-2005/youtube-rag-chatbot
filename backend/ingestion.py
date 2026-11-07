@@ -2,11 +2,13 @@
 backend/ingestion.py
 Phase 1: YouTube Transcript Ingestion Module
 Converts YouTube video transcripts into LangChain Document objects preserving snippet-level metadata.
-Includes reliable fallback to youtube_transcript_api for cloud environments where yt-dlp encounters bot challenges.
+Includes reliable fallback to youtube_transcript_api with automatic cookies.txt authentication
+for cloud environments where anonymous requests encounter bot challenges.
 """
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import logging
 import re
@@ -15,6 +17,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
 from langchain_core.documents import Document
 
 # Ensure project root is available in sys.path when running or importing from subdirectories
@@ -27,6 +30,32 @@ from get_youtube_transcript import extract_video_id, get_youtube_transcript
 logger = logging.getLogger("ingestion")
 
 
+def _get_cookie_session() -> Optional[requests.Session]:
+    """
+    Loads cookies.txt if present (supports local repo root and Render's /etc/secrets/ mount).
+    Returns an authenticated requests.Session for bypassing YouTube cloud datacenter bot challenges.
+    """
+    candidates = [
+        Path("cookies.txt"),
+        PROJECT_ROOT / "cookies.txt",
+        Path("/etc/secrets/cookies.txt"),
+    ]
+    cookie_file = next((p for p in candidates if p.is_file()), None)
+    if not cookie_file:
+        return None
+
+    try:
+        jar = http.cookiejar.MozillaCookieJar(str(cookie_file))
+        jar.load(ignore_discard=True, ignore_expires=True)
+        session = requests.Session()
+        session.cookies = jar
+        logger.info(f"Successfully loaded authenticated session from '{cookie_file}'")
+        return session
+    except Exception as exc:
+        logger.warning(f"Failed to load cookies from '{cookie_file}': {exc}")
+        return None
+
+
 def _fetch_via_youtube_transcript_api(
     video_id: str,
     preferred_languages: Optional[List[str]] = None,
@@ -35,10 +64,12 @@ def _fetch_via_youtube_transcript_api(
     """
     Fallback transcript fetcher using youtube_transcript_api.
     Bypasses yt-dlp web player bot checks on cloud datacenter IPs (Render, AWS, GCP).
+    Automatically attaches authenticated cookies session if available.
     """
     from youtube_transcript_api import YouTubeTranscriptApi
 
-    api = YouTubeTranscriptApi()
+    session = _get_cookie_session()
+    api = YouTubeTranscriptApi(http_client=session)
     transcript_list = api.list(video_id)
 
     selected_transcript = None
